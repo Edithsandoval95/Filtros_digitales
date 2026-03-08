@@ -1,0 +1,160 @@
+%% ================================================================
+%  Implementación y evaluación de filtros digitales (documentado)
+%  Estructura:
+%    1) Definición de la señal de entrada
+%    2) Diseño del filtro
+%    3) Aplicación del filtro a la señal
+%    4) Visualización de los resultados
+%
+%  Nota: Este script incluye tres tipos de filtros:
+%        - Pasa-bajos (LPF) con fc = 60 Hz
+%        - Pasa-altos (HPF) con fc = 80 Hz
+%        - Pasa-bandas (BPF) entre 35 y 55 Hz
+%        Cada tipo se implementa en versión FIR (ventana Hamming)
+%        e IIR (Butterworth/Chebyshev I). Se usa 'filtfilt' para
+%        filtrado de fase cero (sin retardo de grupo).
+%  Requisitos: Signal Processing Toolbox (freqz, filtfilt, pwelch, etc.)
+% ================================================================
+
+clear; close all; clc;
+
+%% 1) Definición de la señal de entrada
+% -----------------------------------------------------------------
+% Parámetros de muestreo
+fs = 1000;            % Frecuencia de muestreo [Hz]
+T  = 5;               % Duración total [s]
+t  = 0:1/fs:T-1/fs;   % Vector de tiempo
+
+% Señal de prueba: suma de sinusoides + ruido blanco gaussiano
+%   - 5 Hz (baja), 40 Hz (media), 120 Hz (alta)
+%   - Ruido blanco para simular medición real
+rng(7);               % Semilla para reproducibilidad
+x = 1.0*sin(2*pi*5*t) + 0.7*sin(2*pi*40*t) + 0.5*sin(2*pi*120*t) ...
+  + 0.8*randn(size(t));
+
+% Vista inicial: tiempo + espectro (0–200 Hz)
+plot_time_and_spectrum(x, fs, 'Señal original (con ruido)');
+
+%% 2) Diseño del filtro
+% -----------------------------------------------------------------
+% Objetivos:
+%   - LPF: pasar < 60 Hz (preserva 5 y 40 Hz, atenúa 120 Hz)
+%   - HPF: pasar > 80 Hz (preserva 120 Hz, atenúa 5 y 40 Hz)
+%   - BPF: pasar 35–55 Hz (aísla ~40 Hz)
+%
+% Nota: Las frecuencias de corte/banda se normalizan con fs/2.
+
+% Especificaciones normalizadas
+fc_lp = 60;  Wn_lp = fc_lp/(fs/2);   % LPF
+fc_hp = 80;  Wn_hp = fc_hp/(fs/2);   % HPF
+Wp_bp = [35 55]/(fs/2);              % BPF
+
+% --- 2.1 FIR con ventana de Hamming ---
+% Ventajas: fase casi lineal. Desventaja: requiere órdenes más altos.
+Nfir_lp = 128;
+b_lp_fir = fir1(Nfir_lp, Wn_lp, 'low',  hamming(Nfir_lp+1)); a_lp_fir = 1;
+
+Nfir_hp = 128;
+b_hp_fir = fir1(Nfir_hp, Wn_hp, 'high', hamming(Nfir_hp+1)); a_hp_fir = 1;
+
+Nfir_bp = 256;  % Bandpass suele requerir más orden
+b_bp_fir = fir1(Nfir_bp, Wp_bp, 'bandpass', hamming(Nfir_bp+1)); a_bp_fir = 1;
+
+% --- 2.2 IIR: Butterworth y Chebyshev I ---
+% Butterworth: banda pasante plana, transición moderada, orden bajo.
+n_lp_butt = 6; [b_lp_butt, a_lp_butt] = butter(n_lp_butt, Wn_lp, 'low');
+
+% Chebyshev I (HPF): transición más rápida que Butterworth, con rizado Rp en PB.
+n_hp_cheb = 5; Rp = 0.5; [b_hp_cheb, a_hp_cheb] = cheby1(n_hp_cheb, Rp, Wn_hp, 'high');
+
+% Butterworth (BPF)
+n_bp_butt = 6; [b_bp_butt, a_bp_butt] = butter(n_bp_butt, Wp_bp, 'bandpass');
+
+% (Opcional) Respuestas en frecuencia y retardo de grupo
+plot_filter_response(b_lp_fir,  a_lp_fir,  fs, 'FIR PB 60 Hz (Hamming)');
+plot_filter_response(b_lp_butt, a_lp_butt, fs, 'IIR PB 60 Hz (Butterworth)');
+plot_filter_response(b_hp_fir,  a_hp_fir,  fs, 'FIR PA 80 Hz (Hamming)');
+plot_filter_response(b_hp_cheb, a_hp_cheb, fs, 'IIR PA 80 Hz (Chebyshev I)');
+plot_filter_response(b_bp_fir,  a_bp_fir,  fs, 'FIR PBanda 35–55 Hz (Hamming)');
+plot_filter_response(b_bp_butt, a_bp_butt, fs, 'IIR PBanda 35–55 Hz (Butterworth)');
+
+%% 3) Aplicación del filtro a la señal
+% -----------------------------------------------------------------
+% Usamos filtfilt() para aplicar el filtro en sentido directo e inverso
+% y obtener fase cero (sin distorsión temporal).
+y_lp_fir =  filtfilt(b_lp_fir,  a_lp_fir,  x);
+y_lp_iir =  filtfilt(b_lp_butt, a_lp_butt, x);
+
+y_hp_fir =  filtfilt(b_hp_fir,  a_hp_fir,  x);
+y_hp_iir =  filtfilt(b_hp_cheb, a_hp_cheb, x);
+
+y_bp_fir =  filtfilt(b_bp_fir,  a_bp_fir,  x);
+y_bp_iir =  filtfilt(b_bp_butt, a_bp_butt, x);
+
+%% 4) Visualización de los resultados
+% -----------------------------------------------------------------
+% Para cada salida se muestran:
+%   - Señal en el tiempo (primer segundo para legibilidad)
+%   - Espectro de magnitud normalizado (0–200 Hz)
+plot_time_and_spectrum(y_lp_fir, fs, 'Salida – FIR PB 60 Hz');
+plot_time_and_spectrum(y_lp_iir, fs, 'Salida – IIR PB 60 Hz');
+
+plot_time_and_spectrum(y_hp_fir, fs, 'Salida – FIR PA 80 Hz');
+plot_time_and_spectrum(y_hp_iir, fs, 'Salida – IIR PA 80 Hz');
+
+plot_time_and_spectrum(y_bp_fir, fs, 'Salida – FIR PBanda 35–55 Hz');
+plot_time_and_spectrum(y_bp_iir, fs, 'Salida – IIR PBanda 35–55 Hz');
+
+% ======== Funciones auxiliares (locales al script) ========
+
+function plot_time_and_spectrum(x, fs, ttl)
+    % Grafica la señal x en el dominio del tiempo (primer segundo)
+    % y su espectro de magnitud normalizado (0–200 Hz).
+    N = numel(x);
+    t = (0:N-1)/fs;
+
+    % FFT de potencia 2 cercana para mejor resolución
+    NFFT = 2^nextpow2(N);
+    X = fft(x, NFFT);
+    f = (0:NFFT/2)*(fs/NFFT);
+    Xmag = abs(X(1:NFFT/2+1));
+    Xmag = Xmag / max(Xmag + eps);  % Normalizar para comparar curvas
+
+    figure('Name', ttl);
+    tiledlayout(2,1);
+
+    % (i) Tiempo
+    nexttile;
+    idx = t <= min(1, t(end));     % Mostrar solo el primer segundo
+    plot(t(idx), x(idx), 'b'); grid on;
+    xlabel('Tiempo [s]'); ylabel('Amplitud');
+    title([ttl, ' – Tiempo (primer segundo)']);
+
+    % (ii) Espectro (0–200 Hz)
+    nexttile;
+    plot(f, 20*log10(Xmag + eps), 'r'); grid on;
+    xlim([0, min(200, fs/2)]);
+    xlabel('Frecuencia [Hz]'); ylabel('Magnitud [dB]');
+    title([ttl, ' – Espectro (0–200 Hz)']);
+end
+
+function plot_filter_response(b, a, fs, ttl)
+    % Muestra magnitud |H(f)| en dB y, si está disponible, el retardo de grupo.
+    [H, w] = freqz(b, a, 4096, fs);
+
+    figure('Name', ['Respuesta – ', ttl]);
+    subplot(2,1,1);
+    plot(w, 20*log10(abs(H)+eps), 'k', 'LineWidth', 1.1); grid on;
+    xlabel('Frecuencia [Hz]'); ylabel('|H(f)| [dB]');
+    title(['Respuesta en frecuencia – ', ttl]);
+
+    subplot(2,1,2);
+    try
+        [gd, wg] = grpdelay(b, a, 512, fs);
+        plot(wg, gd/fs, 'm'); grid on;
+        xlabel('Frecuencia [Hz]'); ylabel('Retardo de grupo [s]');
+        title('Retardo de grupo');
+    catch
+        axis off; text(0.1,0.5,'grpdelay no disponible','Units','normalized');
+    end
+end
